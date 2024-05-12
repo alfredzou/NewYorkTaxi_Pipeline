@@ -22,8 +22,8 @@ jobs:
       with:
         python-version: ${{ matrix.python-version}}
     
-    - name: Install dependencies
-      run: pip install --upgrade pip tox
+    - name: Install tox
+      run: python -m pip install --upgrade tox pip
 
     - name: Run Tox
       run: tox
