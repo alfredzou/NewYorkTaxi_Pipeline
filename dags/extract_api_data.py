@@ -53,7 +53,7 @@ def api_call(
     for run, backoff in enumerate(backoffs, 1):
         try:
             response = session.get(url, timeout=5)
-            # response.raise_for_status()
+            response.raise_for_status()
             return response       
         except requests.exceptions.RetryError as e:
             logging.error(f"Max retries reached for {status_codes}: {e}")

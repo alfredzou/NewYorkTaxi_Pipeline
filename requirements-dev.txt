@@ -2,3 +2,4 @@ apache-airflow==2.9.1
 pytest==8.2.0
 requests==2.31.0
 pendulum==3.0.0
+responses==0.25.0
