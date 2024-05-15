@@ -1,5 +1,5 @@
-# from airflow import DAG
-# from airflow.operators.python_operator import PythonOperator
+from airflow import DAG
+from airflow.operators.python import PythonOperator
 import pendulum
 from datetime import timedelta
 import requests
@@ -7,7 +7,6 @@ from requests.adapters import HTTPAdapter, Retry
 import logging
 import itertools
 import time
-# from urllib3.util.retry import Retry
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -18,25 +17,40 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
-# default_args = {
-#     'owner': 'airflow',
-#     'start_date': pendulum.datetime(2023, 1, 1, tz="Australia/Sydney"),
-#     'retries': 5,
-#     'retry_delay': timedelta(minutes=1),
-#     'catchup': True
-# }
+default_args = {
+    "owner": "airflow",
+    "start_date": pendulum.datetime(2023, 1, 1, tz="Australia/Sydney"),
+    "end_date": pendulum.datetime(2023, 12, 31, tz="Australia/Sydney"),
+    "retries": 2,
+    "retry_delay": timedelta(minutes=1),
+    "catchup": False,
+}
 
 
-def download_api_data(
-    response: requests.Response, type: str, year: str, month: str
-) -> None:
-    with open(f"{type}-{year}-{month}.parquet", "wb") as f:
-        f.write(response.content)
-    logger.info("file downloaded successfully")
+def generate_api_urls(**kwargs) -> list[tuple[str, str, str, str]]:
+    # Convert UTC to Australia/Sydney timezone
+    data_interval_start: pendulum.DateTime = kwargs["data_interval_start"]
+    data_interval_start = data_interval_start.in_timezone("Australia/Sydney")
+
+    types: list[str] = ["yellow", "green", "fhv", "fhvhv"]
+    years: list[str] = [str(data_interval_start.year)]
+    months: list[str] = [f"{data_interval_start.month:02}"]
+    return [
+        (
+            f"https://d37ci6vzurychx.cloudfront.net/trip-data/{type}_tripdata_{year}-{month}.parquet",
+            type,
+            year,
+            month,
+        )
+        for type, year, month in itertools.product(types, years, months)
+    ]
 
 
 def api_call(
-    url: str, max_HTTP_retries: int = 5, max_other_retry:int = 2, backoff_factor: int = 1
+    url: str,
+    max_HTTP_retries: int = 5,
+    max_other_retry: int = 2,
+    backoff_factor: int = 1,
 ) -> requests.Response:
     session = requests.Session()
     status_codes = [429, 502, 503, 504]
@@ -54,7 +68,7 @@ def api_call(
         try:
             response = session.get(url, timeout=5)
             response.raise_for_status()
-            return response       
+            return response
         except requests.exceptions.RetryError as e:
             logging.error(f"Max retries reached for {status_codes}: {e}")
             raise
@@ -79,41 +93,33 @@ def api_call(
         time.sleep(backoff)
 
 
-if __name__ == "__main__":
-    years = ["2023"]
-    months = [f"{i:02}" for i in range(1, 13)]
-    types = ["yellow", "green", "fhv", "fhvhv"]
-    for year, month, type in itertools.product(years, months, types):
-        url = f"https://d37ci6vzurychx.cloudfront.net/trip-data/{type}_tripdata_{year}-{month}.parquet"
+def download_api_data(
+    response: requests.Response, type: str, year: str, month: str
+) -> None:
+    with open(f"{type}-{year}-{month}.parquet", "wb") as f:
+        f.write(response.content)
+    logger.info("file downloaded successfully")
+
+
+def api_calls(**kwargs):
+    api_urls: list[tuple[str, str, str, str]] = generate_api_urls(**kwargs)
+    for url, type, year, month in api_urls:
+        logger.info(f"{type}-{year}-{month}:Attempting connection")
         response = api_call(url)
-        download_api_data(response, year, month, type)
+        logger.info(f"{type}-{year}-{month}:Successfully connected")
+        download_api_data(response, type, year, month)
+        logger.info(f"{type}-{year}-{month}:Successfully downloaded")
 
 
-# def task1():
-#     print('helloworld')
-#     # import requests
-#     year = 2023
-#     month = '01'
-#     r = requests.get(f'https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{year}-{month}.parquet')
-#     print(r.status_code)
+# Instantiate your DAG
+with DAG(
+    "newyorktaxi_dag",
+    default_args=default_args,
+    schedule="@monthly",
+) as dag:
+    task_0 = PythonOperator(
+        task_id="api_calls",
+        python_callable=api_calls,
+    )
 
-# def task2():
-#     return "Executing Task 2"
-
-# # Instantiate your DAG
-# with DAG(
-#     'my_first_dagsv2',
-#     default_args=default_args,
-#     schedule_interval='@monthly',
-# ) as dag:
-#     task_1 = PythonOperator(
-#         task_id='task_1',
-#         python_callable=task1,
-#     )
-#     task_2 = PythonOperator(
-#         task_id='task_2',
-#         python_callable=task2,
-#     )
-
-# # Set task dependencies
-# task_1 >> task_2
+task_0

@@ -3,6 +3,7 @@ config/*
 logs/*
 plugins/*
 *.parquet
+venv_win/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
