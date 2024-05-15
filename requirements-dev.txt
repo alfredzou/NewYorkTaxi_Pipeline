@@ -1,6 +1,8 @@
+# tox==4.15.0
 apache-airflow==2.9.0
 pytest==8.2.0
 requests==2.31.0
 pendulum==3.0.0
 responses==0.25.0
-tox==4.15.0
+google-cloud-storage==2.16.0
+dataclasses==0.6

@@ -7,6 +7,8 @@ from requests.adapters import HTTPAdapter, Retry
 import logging
 import itertools
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -27,7 +29,19 @@ default_args = {
 }
 
 
-def generate_api_urls(**kwargs) -> list[tuple[str, str, str, str]]:
+@dataclass()
+class Metadata:
+    type: str
+    year: str
+    month: str
+
+    def __post_init__(self) -> None:
+        self.url: str = (
+            f"https://d37ci6vzurychx.cloudfront.net/trip-data/{self.type}_tripdata_{self.year}-{self.month}.parquet"
+        )
+
+
+def generate_metadata(**kwargs) -> list[Metadata]:
     # Convert UTC to Australia/Sydney timezone
     data_interval_start: pendulum.DateTime = kwargs["data_interval_start"]
     data_interval_start = data_interval_start.in_timezone("Australia/Sydney")
@@ -36,15 +50,12 @@ def generate_api_urls(**kwargs) -> list[tuple[str, str, str, str]]:
     years: list[str] = [str(data_interval_start.year)]
     months: list[str] = [f"{data_interval_start.month:02}"]
     return [
-        (
-            f"https://d37ci6vzurychx.cloudfront.net/trip-data/{type}_tripdata_{year}-{month}.parquet",
-            type,
-            year,
-            month,
-        )
+        Metadata(type, year, month)
         for type, year, month in itertools.product(types, years, months)
     ]
 
+def create_folder() -> None:
+    Path("data").mkdir(exist_ok=True)
 
 def api_call(
     url: str,
@@ -93,25 +104,30 @@ def api_call(
         time.sleep(backoff)
 
 
-def download_api_data(
-    response: requests.Response, type: str, year: str, month: str
-) -> None:
-    with open(f"{type}-{year}-{month}.parquet", "wb") as f:
+def write_data(response: requests.Response, metadata: Metadata) -> None:
+    path:str = f"data/{metadata.type}-{metadata.year}-{metadata.month}.parquet"
+    with open(path, "wb") as f:
         f.write(response.content)
-    logger.info("file downloaded successfully")
+    logger.info(f"{metadata.type}-{metadata.year}-{metadata.month}:file downloaded successfully to {path}")
 
 
-def api_calls(**kwargs):
-    api_urls: list[tuple[str, str, str, str]] = generate_api_urls(**kwargs)
-    for url, type, year, month in api_urls:
-        logger.info(f"{type}-{year}-{month}:Attempting connection")
-        response = api_call(url)
-        logger.info(f"{type}-{year}-{month}:Successfully connected")
-        download_api_data(response, type, year, month)
-        logger.info(f"{type}-{year}-{month}:Successfully downloaded")
+def api_calls(**kwargs) -> None:
+    metadatas: Metadata = generate_metadata(**kwargs)
+    create_folder()
+    for metadata in metadatas:
+        logger.info(
+            f"{metadata.type}-{metadata.year}-{metadata.month}:Attempting connection"
+        )
+        response = api_call(metadata.url)
+        logger.info(
+            f"{metadata.type}-{metadata.year}-{metadata.month}:Successfully connected"
+        )
+        write_data(response, metadata)
+        logger.info(
+            f"{metadata.type}-{metadata.year}-{metadata.month}:Successfully downloaded"
+        )
 
 
-# Instantiate your DAG
 with DAG(
     "newyorktaxi_dag",
     default_args=default_args,

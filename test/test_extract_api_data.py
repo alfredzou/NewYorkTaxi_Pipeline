@@ -1,16 +1,14 @@
 import pytest
-from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
-from datetime import datetime
 import pendulum
-from dags import extract_api_data
+from dags import newyorktaxi_dag
 import responses
 import requests
+from unittest.mock import patch, Mock
 
-
-def test_generate_api_urls():
+def test_generate_metadata():
     test = PythonOperator(
-        task_id="test", python_callable=extract_api_data.generate_api_urls
+        task_id="test", python_callable=newyorktaxi_dag.generate_metadata
     )
     result = test.execute(
         context={
@@ -20,36 +18,24 @@ def test_generate_api_urls():
         }
     )
     assert result == [
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet",
-            "yellow",
-            "2023",
-            "01",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-01.parquet",
-            "green",
-            "2023",
-            "01",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2023-01.parquet",
-            "fhv",
-            "2023",
-            "01",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-01.parquet",
-            "fhvhv",
-            "2023",
-            "01",
-        ),
+        newyorktaxi_dag.Metadata("yellow", "2023", "01"),
+        newyorktaxi_dag.Metadata("green", "2023", "01"),
+        newyorktaxi_dag.Metadata("fhv", "2023", "01"),
+        newyorktaxi_dag.Metadata("fhvhv", "2023", "01"),
+    ]
+
+    urls = [metadata.url for metadata in result]
+    assert urls == [
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-01.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2023-01.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-01.parquet",
     ]
 
 
-def test_generate_api_urls_end_of_month():
+def test_generate_metadata_end_of_month():
     test = PythonOperator(
-        task_id="test", python_callable=extract_api_data.generate_api_urls
+        task_id="test", python_callable=newyorktaxi_dag.generate_metadata
     )
     result = test.execute(
         context={
@@ -59,41 +45,29 @@ def test_generate_api_urls_end_of_month():
         }
     )
     assert result == [
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-02.parquet",
-            "yellow",
-            "2023",
-            "02",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-02.parquet",
-            "green",
-            "2023",
-            "02",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2023-02.parquet",
-            "fhv",
-            "2023",
-            "02",
-        ),
-        (
-            "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-02.parquet",
-            "fhvhv",
-            "2023",
-            "02",
-        ),
+        newyorktaxi_dag.Metadata("yellow", "2023", "02"),
+        newyorktaxi_dag.Metadata("green", "2023", "02"),
+        newyorktaxi_dag.Metadata("fhv", "2023", "02"),
+        newyorktaxi_dag.Metadata("fhvhv", "2023", "02"),
+    ]
+
+    urls = [metadata.url for metadata in result]
+    assert urls == [
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-02.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2023-02.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2023-02.parquet",
+        "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-02.parquet",
     ]
 
 
 @pytest.fixture
 def url():
-    return "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-12.parquet"
+    return newyorktaxi_dag.Metadata("yellow", "2023", "01").url
 
 
 @pytest.fixture
 def test():
-    return PythonOperator(task_id="test", python_callable=extract_api_data.api_call)
+    return PythonOperator(task_id="test", python_callable=newyorktaxi_dag.api_call)
 
 
 @responses.activate
@@ -243,3 +217,19 @@ def test_api_call_timeout_error(url, test):
         )
 
     assert rsp1.call_count == max_other_retry + 1
+
+@patch('dags.newyorktaxi_dag.Path')
+def test_create_folder(mock_path):
+    newyorktaxi_dag.create_folder()
+
+    mock_path.assert_called_once_with('data')
+    mock_path.return_value.mkdir.assert_called_once_with(exist_ok=True)
+
+@patch('dags.newyorktaxi_dag.open', create=True)
+def test_write_data(mock_open):
+    mock_response = Mock()
+    mock_response.content = b"test"
+    newyorktaxi_dag.write_data(mock_response, newyorktaxi_dag.Metadata("yellow", "2023", "02"))
+
+    mock_open.assert_called_once_with('data/yellow-2023-02.parquet','wb')
+    assert mock_response.content == b"test"
